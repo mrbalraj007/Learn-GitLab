@@ -1,48 +1,61 @@
 image:
-  name: registry.gitlab.com/gitlab-org/gitlab-build-images:terraform
-  entrypoint:
-    - '/usr/bin/env'
-    - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  name: hashicorp/terraform:1.4.2
 
 variables:
-    AWS_ACCESS_KEY_ID: ${MY_AWS_ACCESS_KEY}
-    AWS_SECRET_ACCESS_KEY: ${MY_SECRET_KEY}
-    AWS_DEFAULT_REGION: "us-east-1"
-
-before_script:
-    - terraform --version
-    - terraform init
+  AWS_ACCESS_KEY_ID: ${MY_AWS_ACCESS_KEY}
+  AWS_SECRET_ACCESS_KEY: ${MY_SECRET_KEY}
+  AWS_DEFAULT_REGION: "us-east-1"
 
 stages:
-    - validate
-    - plan
-    - apply
-    - destroy
+  - check-version
+  - validate
+  - plan
+  - apply
+  - destroy
+
+check_version:
+  stage: check-version
+  script:
+    - echo "Installed Terraform version:"
+    - terraform -version | head -n 1
+    - echo "Fetching latest version from HashiCorp..."
+    - LATEST_VERSION=$(curl -s https://checkpoint-api.hashicorp.com/v1/check/terraform | jq -r .current_version)
+    - echo "Latest available version: $LATEST_VERSION"
+    - INSTALLED_VERSION=$(terraform version -json | jq -r .terraform_version)
+    - |
+      if [ "$LATEST_VERSION" != "$INSTALLED_VERSION" ]; then
+        echo "WARNING: Your installed Terraform version ($INSTALLED_VERSION) is not the latest ($LATEST_VERSION)."
+      else
+        echo "Terraform is up to date."
+      fi
 
 validate:
-    stage: validate
-    script:
-        - terraform validate
+  stage: validate
+  script:
+    - terraform validate
+
 plan:
-    stage: plan
-    dependencies:
-        - validate
-    script:
-        - terraform plan -out="planfile"
-    artifacts:
-        paths:
-            - planfile
+  stage: plan
+  dependencies:
+    - validate
+  script:
+    - terraform plan -out="planfile"
+  artifacts:
+    paths:
+      - planfile
+
 apply:
-    stage: apply
-    dependencies:
-        - plan
-    script: 
-        - terraform apply --input=false "planfile"
-    when: manual
+  stage: apply
+  dependencies:
+    - plan
+  script:
+    - terraform apply --input=false "planfile"
+  when: manual
+
 destroy:
-    stage: destroy
-    dependencies:
-        - apply
-    script: 
-        - terraform destroy --auto-approve
-    when: manual    
+  stage: destroy
+  dependencies:
+    - apply
+  script:
+    - terraform destroy --auto-approve
+  when: manual
