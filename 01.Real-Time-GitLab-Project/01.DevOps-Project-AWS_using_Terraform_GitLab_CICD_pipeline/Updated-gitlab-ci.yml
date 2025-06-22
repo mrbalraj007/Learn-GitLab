@@ -1,0 +1,98 @@
+image:
+  name: alpine:3.18
+
+variables:
+  AWS_ACCESS_KEY_ID: ${MY_AWS_ACCESS_KEY}
+  AWS_SECRET_ACCESS_KEY: ${MY_SECRET_KEY}
+  AWS_DEFAULT_REGION: "us-east-1"
+  TF_VERSION: "1.12.2"
+  TF_WORKING_DIR: "01.Real-Time-GitLab-Project/01.DevOps-Project-AWS_using_Terraform_GitLab_CICD_pipeline"
+
+stages:
+  - check-version
+  - validate
+  - plan
+  - apply
+  - destroy
+
+# Shared steps used in all jobs
+.default_job_template: &default_job_template
+  before_script:
+    - apk add --no-cache curl jq unzip bash
+    - curl -o terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+    - unzip terraform.zip
+    - mv terraform /usr/local/bin/
+    - terraform -version
+
+# Optional: Cache for faster builds
+cache:
+  key: terraform-cache
+  paths:
+    - "$TF_WORKING_DIR/.terraform"
+
+check_version:
+  <<: *default_job_template
+  stage: check-version
+  script:
+    - echo "🔍 Installed Terraform version:"
+    - terraform version
+    - echo "🌐 Fetching latest Terraform version from HashiCorp..."
+    - |
+      bash -c '
+      LATEST_VERSION=$(curl -s https://checkpoint-api.hashicorp.com/v1/check/terraform | jq -r .current_version)
+      echo "✅ Latest available version: $LATEST_VERSION"
+      INSTALLED_VERSION=$(terraform version | awk "NR==1 {print \$2}" | tr -d "v")
+      if [ "$LATEST_VERSION" != "$INSTALLED_VERSION" ]; then
+        echo "⚠️  WARNING: Installed Terraform version ($INSTALLED_VERSION) is not the latest ($LATEST_VERSION)."
+      else
+        echo "✅ Terraform is up to date."
+      fi
+      '
+
+validate:
+  <<: *default_job_template
+  stage: validate
+  script:
+    - cd "$TF_WORKING_DIR"
+    - terraform init -reconfigure
+    - terraform validate
+  artifacts:
+    paths:
+      - "$TF_WORKING_DIR/.terraform"
+      - "$TF_WORKING_DIR/.terraform.lock.hcl"
+      - "$TF_WORKING_DIR/terraform.tfstate"
+
+plan:
+  <<: *default_job_template
+  stage: plan
+  dependencies:
+    - validate
+  script:
+    - cd "$TF_WORKING_DIR"
+    - terraform init -reconfigure
+    - terraform plan -out="planfile"
+  artifacts:
+    paths:
+      - "$TF_WORKING_DIR/planfile"
+
+apply:
+  <<: *default_job_template
+  stage: apply
+  dependencies:
+    - plan
+  script:
+    - cd "$TF_WORKING_DIR"
+    - terraform init -reconfigure
+    - terraform apply --input=false "planfile"
+  when: manual
+
+destroy:
+  <<: *default_job_template
+  stage: destroy
+  dependencies:
+    - apply
+  script:
+    - cd "$TF_WORKING_DIR"
+    - terraform init -reconfigure
+    - terraform destroy --auto-approve
+  when: manual
